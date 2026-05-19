@@ -1,25 +1,30 @@
-RP Coverage Dashboard WordPress Plugin
-======================================
+=== RP Coverage Dashboard ===
+Contributors: receptionperception
+Tags: reception perception, dashboard, admin, google sheets
+Requires at least: 6.0
+Requires PHP: 7.4
+Stable tag: 1.0.0
+License: MIT
 
-Install:
-1. In WordPress Admin, go to Plugins > Add New > Upload Plugin.
-2. Upload rp-coverage-dashboard-wordpress-plugin.zip.
-3. Activate the plugin.
-4. Open WP Admin > RP Coverage Dashboard.
+Internal WordPress Admin dashboard for Reception Perception success vs. coverage graphics.
 
-Access:
-- By default, any logged-in WordPress user with backend access can use it.
-- Developers can restrict access with the rp_coverage_dashboard_capability filter.
+== Installation ==
+1. Upload rp-coverage-dashboard.zip in WordPress Admin > Plugins > Add New > Upload Plugin.
+2. Activate the plugin.
+3. Open WordPress Admin > RP Coverage Dashboard.
 
-Google Sheets import:
-- The sheet must be public: Anyone with the link can view.
-- Expected columns are:
-  A = Coverage Type
-  B = % of Routes
-  C = Success Rate
-  D = Percentile
-  E = Player name, from row 2
+== Access ==
+By default, users need the edit_posts capability. To restrict to admins only, add this in a small site plugin or theme functions.php:
 
-Exports:
-- PNG export happens in the browser.
-- HTML export downloads an inline HTML block for use in content.
+add_filter('rpcd_required_capability', function () {
+    return 'manage_options';
+});
+
+== Google Sheets Import ==
+The Google Sheet must be public with "Anyone with the link can view" enabled.
+Expected columns:
+A = Coverage Type
+B = % of Routes
+C = Success Rate
+D = Percentile
+E = Player name on the first data row

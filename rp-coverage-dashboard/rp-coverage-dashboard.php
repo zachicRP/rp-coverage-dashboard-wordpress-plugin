@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: RP Coverage Dashboard
- * Description: Internal Reception Perception success vs. coverage dashboard for WordPress admin users.
+ * Description: Internal Reception Perception success vs. coverage dashboard for WordPress Admin.
  * Version: 1.0.0
  * Author: Reception Perception
  * Requires at least: 6.0
@@ -19,12 +19,63 @@ define('RPCD_URL', plugin_dir_url(__FILE__));
 $GLOBALS['rpcd_admin_hook'] = null;
 
 /**
- * Default access is any logged-in WordPress user who can access the dashboard.
- * To restrict to editors/admins, change the returned capability to edit_posts,
- * edit_others_posts, or manage_options via the rp_coverage_dashboard_capability filter.
+ * Default access is any logged-in user who can create/edit posts.
+ * Change with: add_filter('rpcd_required_capability', fn() => 'manage_options');
  */
 function rpcd_required_capability() {
-    return apply_filters('rp_coverage_dashboard_capability', 'read');
+    return apply_filters('rpcd_required_capability', 'edit_posts');
+}
+
+function rpcd_manifest_path() {
+    $vite_manifest = RPCD_DIR . 'dist/public/.vite/manifest.json';
+    $legacy_manifest = RPCD_DIR . 'dist/public/manifest.json';
+
+    if (file_exists($vite_manifest)) {
+        return $vite_manifest;
+    }
+
+    if (file_exists($legacy_manifest)) {
+        return $legacy_manifest;
+    }
+
+    return '';
+}
+
+function rpcd_get_manifest() {
+    $path = rpcd_manifest_path();
+
+    if (!$path || !file_exists($path)) {
+        return array();
+    }
+
+    $manifest = json_decode(file_get_contents($path), true);
+
+    return is_array($manifest) ? $manifest : array();
+}
+
+function rpcd_get_manifest_entry($manifest) {
+    if (isset($manifest['src/main.tsx']) && is_array($manifest['src/main.tsx'])) {
+        return $manifest['src/main.tsx'];
+    }
+
+    if (isset($manifest['index.html']) && is_array($manifest['index.html'])) {
+        return $manifest['index.html'];
+    }
+
+    foreach ($manifest as $entry) {
+        if (is_array($entry) && !empty($entry['isEntry'])) {
+            return $entry;
+        }
+    }
+
+    return null;
+}
+
+function rpcd_assets_available() {
+    $manifest = rpcd_get_manifest();
+    $entry = rpcd_get_manifest_entry($manifest);
+
+    return is_array($entry) && !empty($entry['file']);
 }
 
 add_action('admin_menu', function () {
@@ -50,9 +101,20 @@ function rpcd_render_admin_page() {
     );
 
     echo '<div class="wrap rp-coverage-dashboard-admin">';
-    echo '<h1>RP Coverage Dashboard</h1>';
-    echo '<p>Paste a public Google Sheet URL in the dashboard editor, then export PNG or HTML for RP content.</p>';
-    echo '<script>window.RPCoverageDashboard = ' . wp_json_encode($config, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';</script>';
+    echo '<h1>' . esc_html__('RP Coverage Dashboard', 'rp-coverage-dashboard') . '</h1>';
+
+    if (!rpcd_assets_available()) {
+        echo '<div class="notice notice-error"><p>';
+        echo esc_html__('The dashboard assets are missing. Rebuild the React app and include dist/public in this plugin.', 'rp-coverage-dashboard');
+        echo '</p></div>';
+        echo '</div>';
+        return;
+    }
+
+    echo '<script>';
+    echo 'window.RPCoverageDashboard = ' . wp_json_encode($config) . ';';
+    echo '</script>';
+
     echo '<div id="rp-coverage-dashboard-root"></div>';
     echo '</div>';
 }
@@ -62,53 +124,45 @@ add_action('admin_enqueue_scripts', function ($hook_suffix) {
         return;
     }
 
-    $manifest_path = RPCD_DIR . 'dist/public/.vite/manifest.json';
+    $manifest = rpcd_get_manifest();
+    $entry = rpcd_get_manifest_entry($manifest);
 
-    if (!file_exists($manifest_path)) {
-        wp_add_inline_style(
-            'wp-admin',
-            '.rp-coverage-dashboard-admin:after{content:"Build files are missing. Rebuild the plugin package and upload it again.";display:block;margin-top:16px;padding:12px;border-left:4px solid #d63638;background:#fff;color:#1d2327;}'
-        );
-        return;
-    }
-
-    $manifest = json_decode((string) file_get_contents($manifest_path), true);
-
-    if (!is_array($manifest)) {
-        return;
-    }
-
-    $entry = isset($manifest['src/main.tsx']) ? $manifest['src/main.tsx'] : null;
-
-    if (!$entry) {
-        foreach ($manifest as $candidate) {
-            if (!empty($candidate['isEntry'])) {
-                $entry = $candidate;
-                break;
-            }
-        }
-    }
-
-    if (empty($entry['file'])) {
+    if (!is_array($entry) || empty($entry['file'])) {
         return;
     }
 
     if (!empty($entry['css']) && is_array($entry['css'])) {
         foreach ($entry['css'] as $index => $css_file) {
+            $css_path = RPCD_DIR . 'dist/public/' . ltrim($css_file, '/');
             wp_enqueue_style(
-                'rp-coverage-dashboard-' . $index,
+                'rp-coverage-dashboard-' . (int) $index,
                 RPCD_URL . 'dist/public/' . ltrim($css_file, '/'),
                 array(),
-                RPCD_VERSION
+                file_exists($css_path) ? filemtime($css_path) : RPCD_VERSION
             );
         }
     }
 
+    $script_file = ltrim($entry['file'], '/');
+    $script_path = RPCD_DIR . 'dist/public/' . $script_file;
+    $script_url = RPCD_URL . 'dist/public/' . $script_file;
+    $version = file_exists($script_path) ? filemtime($script_path) : RPCD_VERSION;
+
+    if (function_exists('wp_enqueue_script_module')) {
+        wp_enqueue_script_module(
+            'rp-coverage-dashboard',
+            $script_url,
+            array(),
+            $version
+        );
+        return;
+    }
+
     wp_enqueue_script(
         'rp-coverage-dashboard',
-        RPCD_URL . 'dist/public/' . ltrim($entry['file'], '/'),
+        $script_url,
         array(),
-        RPCD_VERSION,
+        $version,
         true
     );
 
@@ -123,7 +177,7 @@ add_action('admin_enqueue_scripts', function ($hook_suffix) {
 
 add_action('rest_api_init', function () {
     register_rest_route('rp-coverage-dashboard/v1', '/sheets', array(
-        'methods'             => WP_REST_Server::READABLE,
+        'methods'             => 'GET',
         'callback'            => 'rpcd_get_sheet_data',
         'permission_callback' => function () {
             return current_user_can(rpcd_required_capability());
@@ -169,20 +223,20 @@ function rpcd_parse_csv($text) {
         return $rows;
     }
 
-    fwrite($handle, (string) $text);
+    fwrite($handle, $text);
     rewind($handle);
 
     while (($data = fgetcsv($handle)) !== false) {
-        $has_value = false;
+        $has_content = false;
 
         foreach ($data as $cell) {
             if (trim((string) $cell) !== '') {
-                $has_value = true;
+                $has_content = true;
                 break;
             }
         }
 
-        if ($has_value) {
+        if ($has_content) {
             $rows[] = array_map('trim', $data);
         }
     }
@@ -193,7 +247,7 @@ function rpcd_parse_csv($text) {
 }
 
 function rpcd_get_sheet_data(WP_REST_Request $request) {
-    $sheet_url = esc_url_raw((string) $request->get_param('url'));
+    $sheet_url = esc_url_raw($request->get_param('url'));
 
     if (!$sheet_url) {
         return new WP_Error(
@@ -227,9 +281,8 @@ function rpcd_get_sheet_data(WP_REST_Request $request) {
     );
 
     $response = wp_safe_remote_get($csv_url, array(
-        'timeout'             => 20,
-        'redirection'         => 5,
-        'limit_response_size' => 1048576,
+        'timeout'     => 15,
+        'redirection' => 3,
     ));
 
     if (is_wp_error($response)) {
@@ -240,7 +293,7 @@ function rpcd_get_sheet_data(WP_REST_Request $request) {
         );
     }
 
-    $status = (int) wp_remote_retrieve_response_code($response);
+    $status = wp_remote_retrieve_response_code($response);
 
     if ($status < 200 || $status >= 300) {
         return new WP_Error(
@@ -250,26 +303,18 @@ function rpcd_get_sheet_data(WP_REST_Request $request) {
         );
     }
 
-    $csv_text = (string) wp_remote_retrieve_body($response);
-
-    if ($csv_text === '' || preg_match('/<\s*html/i', $csv_text)) {
-        return new WP_Error(
-            'rpcd_sheet_unavailable',
-            'Could not read CSV data from the sheet. Make sure it is public and accessible as a Google Sheet.',
-            array('status' => 400)
-        );
-    }
-
+    $csv_text = wp_remote_retrieve_body($response);
     $rows = rpcd_parse_csv($csv_text);
-    $data_rows = array_values(array_filter(array_slice($rows, 1), function ($row) {
+    $data_rows = array();
+
+    foreach (array_slice($rows, 1) as $row) {
         foreach ($row as $cell) {
             if (trim((string) $cell) !== '') {
-                return true;
+                $data_rows[] = $row;
+                break;
             }
         }
-
-        return false;
-    }));
+    }
 
     if (empty($data_rows)) {
         return new WP_Error(
@@ -279,7 +324,10 @@ function rpcd_get_sheet_data(WP_REST_Request $request) {
         );
     }
 
-    $player_name = isset($data_rows[0][4]) ? sanitize_text_field($data_rows[0][4]) : '';
+    $player_name = isset($data_rows[0][4])
+        ? sanitize_text_field($data_rows[0][4])
+        : '';
+
     $coverage_rows = array();
 
     foreach (array_slice($data_rows, 0, 4) as $row) {
@@ -287,7 +335,9 @@ function rpcd_get_sheet_data(WP_REST_Request $request) {
             'label'        => isset($row[0]) ? strtoupper(sanitize_text_field($row[0])) : '',
             'routePercent' => isset($row[1]) ? rpcd_normalize_percent($row[1]) : '-',
             'successRate'  => isset($row[2]) ? rpcd_normalize_percent($row[2]) : '-',
-            'percentile'   => isset($row[3]) && trim((string) $row[3]) !== '' ? sanitize_text_field($row[3]) : '-',
+            'percentile'   => isset($row[3]) && trim((string) $row[3]) !== ''
+                ? sanitize_text_field($row[3])
+                : '-',
         );
     }
 
