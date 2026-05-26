@@ -1,4 +1,5 @@
 module.exports = {
+  corePlugins: { preflight: false },
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}",
     "./src/**/*.{html,js,ts,jsx,tsx}",
     "app/**/*.{ts,tsx}",

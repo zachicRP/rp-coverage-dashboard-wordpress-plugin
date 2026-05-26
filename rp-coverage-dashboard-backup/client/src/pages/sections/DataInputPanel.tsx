@@ -2,6 +2,23 @@ import { useState } from "react";
 import { Link2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import type { DashboardData, CoverageRow } from "../CoverageDashboard";
 
+declare global {
+  interface Window {
+    RPCoverageDashboard?: {
+      sheetsEndpoint: string;
+      nonce?: string;
+    };
+  }
+}
+
+const getSheetsEndpoint = () =>
+  window.RPCoverageDashboard?.sheetsEndpoint ?? "/api/sheets";
+
+const getWpHeaders = (): Record<string, string> => {
+  const nonce = window.RPCoverageDashboard?.nonce;
+  return nonce ? { "X-WP-Nonce": nonce } : {};
+};
+
 interface Props {
   data: DashboardData;
   onChange: (data: DashboardData) => void;
@@ -36,7 +53,12 @@ export const DataInputPanel = ({ data, onChange }: Props): JSX.Element => {
     setImportStatus("idle");
     setImportMessage("");
     try {
-      const res = await fetch(`/api/sheets?url=${encodeURIComponent(url)}`);
+      const sheetsEndpoint = getSheetsEndpoint();
+      const separator = sheetsEndpoint.includes("?") ? "&" : "?";
+      const res = await fetch(
+        `${sheetsEndpoint}${separator}url=${encodeURIComponent(url)}`,
+        { headers: getWpHeaders() }
+      );
       const json = await res.json();
       if (!res.ok) {
         setImportStatus("error");

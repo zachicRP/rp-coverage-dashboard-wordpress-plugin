@@ -87,19 +87,6 @@
         <tbody id="input-rows"></tbody>
       </table>
     </div>
-
-    <div style="margin:16px 0 8px;font-size:10px;font-weight:700;letter-spacing:2px;color:#6b6357;">RECEIVING METRICS</div>
-    <div style="border-radius:4px;border:1px solid #c9b89a;overflow:hidden;">
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr style="background:#3d5851;">
-            <th style="padding:8px 12px;text-align:left;font-size:9.5px;font-weight:700;letter-spacing:1.5px;color:#faf6ec;width:200px;">METRIC</th>
-            <th style="padding:8px 12px;text-align:left;font-size:9.5px;font-weight:700;letter-spacing:1.5px;color:#faf6ec;">VALUE</th>
-          </tr>
-        </thead>
-        <tbody id="metric-rows"></tbody>
-      </table>
-    </div>
     <p style="margin-top:8px;font-size:9px;color:#9b8f82;">Changes update the dashboard live.</p>
   </div>
 </div>
@@ -122,28 +109,37 @@ const state = {
     { label: "ZONE",   routePercent: "47.5%", successRate: "68.4%", percentile: "44th" },
     { label: "PRESS",  routePercent: "47.5%", successRate: "68.4%", percentile: "44th" },
     { label: "DOUBLE", routePercent: "47.5%", successRate: "-", percentile: "-" },
-  ],
-  metrics: [
-    { label: "OUTSIDE %",         value: "71.0%" },
-    { label: "ON LOS %",          value: "88.0%" },
-    { label: "CONTESTED CATCH %", value: "54.0%", lowYield: true },
-    { label: "CONTESTED RATE",    value: "23.0%" },
   ]
 };
 
 // ── Color utils ───────────────────────────────────────────────────────────────
-// 3-tier red/yellow/green by threshold (yellow_min, green_min).
-function qC(v,y,g){ return v>=g?"#609c63":v>=y?"#e3ca61":"#d15650"; }
-function qT(v,y,g){ return v>=g?"#cad7b1":v>=y?"#f0e9a0":"#f0c0be"; }
-// Thresholds [yellow_min, green_min]
-const TH_HY  = [65, 81];  // High-yield success rate (Man/Zone/Press)
-const TH_LY  = [7,  30];  // Low-yield (Contested Catch %)
-const TH_VOL = [10, 21];  // Volume — Route %
-const TH_PCT = [34, 67];  // Percentile — "true grade" override
+function qColor(v)  { return v>=75?"#609c63":v>=50?"#e3ca61":v>=25?"#e4a345":"#d15650"; }
+function qTrack(v)  { return v>=75?"#cad7b1":v>=50?"#f0e9a0":v>=25?"#f5ddb0":"#f0c0be"; }
 function pct(val)   { const n=parseFloat(String(val).replace("%","")); return isNaN(n)?0:Math.min(100,Math.max(0,n)); }
 function pctile(val){ const m=String(val).match(/\d+/); return m?Math.min(100,Math.max(0,parseInt(m[0],10))):-1; }
 function fmtPct(val){ return (!val||String(val).trim()==="-")?"-":String(val).toUpperCase(); }
 function hasPct(val){ return !isNaN(parseFloat(String(val).replace("%",""))); }
+
+// ── SVG ring ──────────────────────────────────────────────────────────────────
+// Rendered as an <img> with the SVG embedded as a data URI. html2canvas mis-positions
+// inline <svg> elements but renders <img> replaced elements at their correct box —
+// so this is the only reliable way to keep the donut centered in the PNG export.
+function ringSvg(value, color) {
+  const r=42, circ=2*Math.PI*r, offset=circ-(value/100)*circ, track=qTrack(value);
+  return `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' width='120' height='120'>`
+    + `<g transform='rotate(-90 50 50)'>`
+    + `<circle cx='50' cy='50' r='${r}' fill='none' stroke='${track}' stroke-width='9'/>`
+    + `<circle cx='50' cy='50' r='${r}' fill='none' stroke='${color}' stroke-width='9' `
+    + `stroke-dasharray='${circ.toFixed(2)}' stroke-dashoffset='${offset.toFixed(2)}' stroke-linecap='round'/>`
+    + `</g>`
+    + `<text x='50' y='50' text-anchor='middle' dominant-baseline='central' `
+    + `fill='${color}' font-size='12' font-family='Helvetica,Arial,sans-serif' font-weight='600'>${value.toFixed(1)}%</text>`
+    + `</svg>`;
+}
+function ring(value, color) {
+  const uri = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(ringSvg(value, color));
+  return `<img src="${uri}" width="120" height="120" alt="" style="display:inline-block;vertical-align:top;"/>`;
+}
 
 // ── Dashboard render ──────────────────────────────────────────────────────────
 function renderDashboard() {
@@ -151,62 +147,63 @@ function renderDashboard() {
 
   const tableRows = rows.map((row, i) => {
     const rv=pct(row.routePercent), sv=pct(row.successRate);
-    const pn=pctile(row.percentile);
+    const pn=pctile(row.percentile), pc=pn>=0?qColor(pn):"#c9b89a";
     const bt=i>0?"border-top:1px solid #f0e8d8;":"";
-    const noColor = row.label === "DOUBLE";
-    // Success rate: percentile overrides raw value. DOUBLE = neutral.
-    const srColor = noColor ? "#c9b89a" : (pn>=0 ? qC(pn,...TH_PCT) : qC(sv,...TH_HY));
-    const srTrack = noColor ? "#e8dfc8" : (pn>=0 ? qT(pn,...TH_PCT) : qT(sv,...TH_HY));
-    // Pctile pill: percentile thresholds. DOUBLE = neutral.
-    const pcColor = noColor ? "#c9b89a" : qC(pn,...TH_PCT);
-    // Routes: volume thresholds for ALL rows (DOUBLE included).
-    const routeFill  = qC(rv,...TH_VOL);
-    const routeTrack = qT(rv,...TH_VOL);
-    const routeText  = qC(rv,...TH_VOL);
-    return `<div style="display:flex;align-items:center;padding:28px 22px;${bt}">
+    return `<div style="display:flex;align-items:center;padding:12px 22px;${bt}">
       <div style="flex:0 0 120px;font-size:15px;font-weight:600;color:#1f1a14;">${row.label}</div>
-      <div style="flex:1;display:flex;align-items:center;gap:6px;padding-right:14px;">
-        ${hasPct(row.successRate)
-          ? `<div style="flex:1;display:flex;height:12px;border-radius:9999px;overflow:hidden;background:${srTrack};">
-               <div style="width:${sv}%;background:${srColor};border-radius:4px;flex-shrink:0;"></div>
-             </div>
-             <span style="font-size:20px;font-weight:600;color:${srColor};min-width:70px;text-align:right;">${row.successRate}</span>`
-          : `<span style="font-size:20px;font-weight:600;color:#c9b89a;">-</span>`}
-      </div>
-      <div style="flex:0 0 100px;display:flex;justify-content:center;padding:0 14px;">
-        ${pn>=0
-          ? `<span style="background:${pcColor};color:#fff;border-radius:999px;padding:5px 10px;display:inline-flex;align-items:center;font-size:11px;font-weight:700;">${fmtPct(row.percentile)}</span>`
-          : `<span style="font-size:20px;font-weight:600;color:#c9b89a;">-</span>`}
-      </div>
-      <div style="flex:1;display:flex;align-items:center;gap:6px;border-left:1px solid #c9b89a;padding-left:14px;">
-        <div style="flex:1;display:flex;height:12px;border-radius:9999px;overflow:hidden;background:${routeTrack};">
-          <div style="width:${rv}%;background:${routeFill};border-radius:4px;flex-shrink:0;"></div>
+      <div style="flex:2.1;display:flex;align-items:center;gap:14px;padding-right:18px;">
+        <div style="flex:1;display:flex;height:8px;border-radius:4px;overflow:hidden;background:${qTrack(rv)};">
+          <div style="width:${rv}%;background:${qColor(rv)};border-radius:4px;flex-shrink:0;"></div>
         </div>
-        <span style="font-size:20px;font-weight:600;color:${routeText};min-width:70px;text-align:right;">${row.routePercent}</span>
+        <span style="font-size:13px;font-weight:600;color:${qColor(rv)};min-width:42px;">${row.routePercent}</span>
+      </div>
+      <div style="flex:2.1;display:flex;align-items:center;gap:14px;padding-left:18px;border-left:1px solid #c9b89a;">
+        ${hasPct(row.successRate)
+          ? `<div style="flex:1;display:flex;height:8px;border-radius:4px;overflow:hidden;background:${qTrack(sv)};">
+               <div style="width:${sv}%;background:${qColor(sv)};border-radius:4px;flex-shrink:0;"></div>
+             </div>
+             <span style="font-size:13px;font-weight:600;color:${qColor(sv)};min-width:42px;">${row.successRate}</span>`
+          : `<span style="font-size:13px;font-weight:600;color:#c9b89a;">-</span>`}
+      </div>
+      <div style="flex:0 0 80px;display:flex;justify-content:flex-end;">
+        ${pn>=0
+          ? `<span style="background:${pc};color:#fff;border-radius:999px;padding:5px 10px;display:inline-flex;align-items:center;font-size:11px;font-weight:700;">${fmtPct(row.percentile)}</span>`
+          : `<span style="font-size:13px;font-weight:600;color:#c9b89a;">-</span>`}
       </div>
     </div>`;
   }).join("");
 
-  const cards = state.metrics.map(m => {
-    const v = pct(m.value);
-    const th = m.lowYield ? TH_LY : TH_HY;
-    const color = qC(v, ...th), track = qT(v, ...th);
-    return `<div style="background:#fff;border-radius:6px;border:1.5px solid rgba(61,88,81,0.24);padding:24px 14px;">
-      <div style="text-align:center;margin-bottom:10px;font-size:13px;font-weight:600;color:#1f1a14;text-transform:uppercase;white-space:nowrap;">${m.label}</div>
-      <div style="text-align:center;font-size:45px;font-weight:700;color:${color};margin-bottom:12px;">${v.toFixed(1)}%</div>
-      <div style="height:13px;border-radius:9999px;overflow:hidden;background:${track};">
-        <div style="width:${v}%;height:100%;background:${color};border-radius:5px;"></div>
-      </div>
+  const cards = rows.map(row => {
+    const rv=pct(row.routePercent), sv=pct(row.successRate);
+    return `<div style="background:#fff;border-radius:6px;border:1.5px solid rgba(61,88,81,0.24);padding:12px 14px;">
+      <div style="text-align:center;margin-bottom:8px;font-size:15px;font-weight:600;color:#1f1a14;">${row.label}</div>
+      <div style="text-align:center;margin-bottom:14px;">${ring(rv, qColor(rv))}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:#6b6357;margin-bottom:4px;">SUCCESS RATE</div>
+      ${hasPct(row.successRate)
+        ? `<div style="display:flex;align-items:center;gap:8px;">
+             <div style="flex:1;height:7px;border-radius:4px;overflow:hidden;background:${qTrack(sv)};">
+               <div style="width:${sv}%;height:100%;background:${qColor(sv)};border-radius:4px;"></div>
+             </div>
+             <span style="font-size:11px;font-weight:600;color:${qColor(sv)};min-width:36px;text-align:right;">${row.successRate}</span>
+           </div>`
+        : `<div style="font-size:11px;font-weight:600;color:#c9b89a;">-</div>`}
     </div>`;
   }).join("");
 
   document.getElementById("dashboard-content").innerHTML = `
-    <div style="width:100%;border:1.5px solid rgba(61,88,81,0.24);border-radius:6px;overflow:hidden;margin-bottom:32px;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:28px;margin-bottom:40px;width:100%;">
+      <div style="text-align:center;line-height:0.9;">
+        <div style="font-size:60px;font-weight:500;color:#3d584e;letter-spacing:-2px;font-family:'Montserrat',Helvetica,Arial,sans-serif;">SUCCESS RATE</div>
+        <div style="font-size:60px;font-weight:900;color:#3d584e;letter-spacing:-2px;font-family:'Montserrat',Helvetica,Arial,sans-serif;">VS. COVERAGE</div>
+      </div>
+      <div style="height:2px;width:52px;background:#b9aed3;border-radius:2px;"></div>
+    </div>
+    <div style="width:100%;border:1.5px solid rgba(61,88,81,0.24);border-radius:6px;overflow:hidden;margin-bottom:40px;">
       <div style="display:flex;align-items:center;background:#3d5851;padding:0 22px;min-height:45px;">
-        <div style="flex:0 0 120px;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">COVERAGE</div>
-        <div style="flex:1;padding-right:14px;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">SUCCESS RATE</div>
-        <div style="flex:0 0 100px;padding:0 14px;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;text-align:center;">PCTILE</div>
-        <div style="flex:1;padding-left:14px;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">% OF ROUTES</div>
+        <div style="flex:0 0 120px;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">COVERAGE</div>
+        <div style="flex:2.1;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">% OF ROUTES</div>
+        <div style="flex:2.1;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">SUCCESS RATE</div>
+        <div style="flex:0 0 80px;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;text-align:right;">PCTILE</div>
       </div>
       <div style="background:#fff;">${tableRows}</div>
     </div>
@@ -224,10 +221,6 @@ function syncInputs() {
     if (r) r.value = row.routePercent;
     if (s) s.value = row.successRate;
     if (p) p.value = row.percentile;
-  });
-  state.metrics.forEach((m, i) => {
-    const el = document.getElementById(`inp-metric-${i}`);
-    if (el) el.value = m.value;
   });
 }
 
@@ -252,16 +245,6 @@ function buildInputRows() {
         <input id="inp-pctile-${i}" type="text" value="${row.percentile}" placeholder="e.g. 65th"
           style="${inpStyle}" onfocus="${focus}" onblur="${blur}"
           oninput="state.rows[${i}].percentile=this.value;renderDashboard()"/>
-      </td>
-    </tr>`
-  ).join("");
-  document.getElementById("metric-rows").innerHTML = state.metrics.map((m, i) =>
-    `<tr style="${i%2===0?'background:#fff':'background:#faf8f3'}">
-      <td style="border-top:1px solid #e8dfc8;padding:8px 12px;font-size:12px;font-weight:500;color:#3d5851;">${m.label}</td>
-      <td style="border-top:1px solid #e8dfc8;padding:6px 12px;">
-        <input id="inp-metric-${i}" type="text" value="${m.value}" placeholder="e.g. 54.0%"
-          style="${inpStyle}" onfocus="${focus}" onblur="${blur}"
-          oninput="state.metrics[${i}].value=this.value;renderDashboard()"/>
       </td>
     </tr>`
   ).join("");
@@ -415,57 +398,68 @@ function generateHtml() {
   const { playerName, rows } = state;
   const tableRows = rows.map((row, i) => {
     const rv=pct(row.routePercent), sv=pct(row.successRate);
-    const pn=pctile(row.percentile);
+    const pn=pctile(row.percentile), pc=pn>=0?qColor(pn):"#c9b89a";
     const bt=i>0?"border-top:1px solid #f0e8d8;":"";
-    const noColor = row.label === "DOUBLE";
-    const srColor = noColor ? "#c9b89a" : (pn>=0 ? qC(pn,...TH_PCT) : qC(sv,...TH_HY));
-    const srTrack = noColor ? "#e8dfc8" : (pn>=0 ? qT(pn,...TH_PCT) : qT(sv,...TH_HY));
-    const pcColor = noColor ? "#c9b89a" : qC(pn,...TH_PCT);
-    const routeFill  = qC(rv,...TH_VOL);
-    const routeTrack = qT(rv,...TH_VOL);
-    const routeText  = qC(rv,...TH_VOL);
-    return `<div style="display:flex;align-items:center;padding:28px 22px;${bt}">
+    return `<div style="display:flex;align-items:center;padding:12px 22px;${bt}">
       <div style="flex:0 0 120px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#1f1a14;">${row.label}</div>
-      <div style="flex:1;display:flex;align-items:center;gap:6px;padding-right:14px;">
+      <div style="flex:2.1;display:flex;align-items:center;gap:14px;padding-right:18px;">
+        <div style="flex:1;display:flex;height:8px;border-radius:4px;overflow:hidden;background:${qTrack(rv)};"><div style="width:${rv}%;background:${qColor(rv)};border-radius:4px;flex-shrink:0;"></div></div>
+        <span style="font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:${qColor(rv)};min-width:42px;">${row.routePercent}</span>
+      </div>
+      <div style="flex:2.1;display:flex;align-items:center;gap:14px;padding-left:18px;border-left:1px solid #c9b89a;">
         ${hasPct(row.successRate)
-          ? `<div style="flex:1;display:flex;height:12px;border-radius:9999px;overflow:hidden;background:${srTrack};"><div style="width:${sv}%;background:${srColor};border-radius:4px;flex-shrink:0;"></div></div>
-             <span style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:600;color:${srColor};min-width:70px;text-align:right;">${row.successRate}</span>`
-          : `<span style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:600;color:#c9b89a;">-</span>`}
+          ? `<div style="flex:1;display:flex;height:8px;border-radius:4px;overflow:hidden;background:${qTrack(sv)};"><div style="width:${sv}%;background:${qColor(sv)};border-radius:4px;flex-shrink:0;"></div></div>
+             <span style="font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:${qColor(sv)};min-width:42px;">${row.successRate}</span>`
+          : `<span style="font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#c9b89a;">-</span>`}
       </div>
-      <div style="flex:0 0 100px;display:flex;justify-content:center;padding:0 14px;">
+      <div style="flex:0 0 80px;display:flex;justify-content:flex-end;">
         ${pn>=0
-          ? `<span style="background:${pcColor};color:#fff;border-radius:999px;padding:5px 10px;display:inline-flex;align-items:center;font-family:Helvetica,Arial,sans-serif;font-size:11px;font-weight:700;">${fmtPct(row.percentile)}</span>`
-          : `<span style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:600;color:#c9b89a;">-</span>`}
-      </div>
-      <div style="flex:1;display:flex;align-items:center;gap:6px;border-left:1px solid #c9b89a;padding-left:14px;">
-        <div style="flex:1;display:flex;height:12px;border-radius:9999px;overflow:hidden;background:${routeTrack};"><div style="width:${rv}%;background:${routeFill};border-radius:4px;flex-shrink:0;"></div></div>
-        <span style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:600;color:${routeText};min-width:70px;text-align:right;">${row.routePercent}</span>
+          ? `<span style="background:${pc};color:#fff;border-radius:999px;padding:5px 10px;display:inline-flex;align-items:center;font-family:Helvetica,Arial,sans-serif;font-size:11px;font-weight:700;">${fmtPct(row.percentile)}</span>`
+          : `<span style="font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#c9b89a;">-</span>`}
       </div>
     </div>`;
   }).join("");
 
-  const cards = state.metrics.map(m => {
-    const v = pct(m.value);
-    const th = m.lowYield ? TH_LY : TH_HY;
-    const color = qC(v, ...th), track = qT(v, ...th);
-    return `<div style="background:#fff;border-radius:6px;border:1.5px solid rgba(61,88,81,0.24);padding:24px 14px;">
-      <div style="text-align:center;margin-bottom:10px;font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;color:#1f1a14;text-transform:uppercase;white-space:nowrap;">${m.label}</div>
-      <div style="text-align:center;font-family:Helvetica,Arial,sans-serif;font-size:45px;font-weight:700;color:${color};margin-bottom:12px;">${v.toFixed(1)}%</div>
-      <div style="height:13px;border-radius:9999px;overflow:hidden;background:${track};">
-        <div style="width:${v}%;height:100%;background:${color};border-radius:5px;"></div>
+  const cards = rows.map(row => {
+    const rv=pct(row.routePercent), sv=pct(row.successRate);
+    const r=42, circ=(2*Math.PI*r), offset=circ-(rv/100)*circ;
+    return `<div style="background:#fff;border-radius:6px;border:1.5px solid rgba(61,88,81,0.24);padding:12px 14px;">
+      <div style="text-align:center;margin-bottom:8px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;color:#1f1a14;">${row.label}</div>
+      <div style="text-align:center;margin-bottom:14px;">
+        <svg viewBox="0 0 100 100" width="120" height="120" style="display:inline-block;vertical-align:top;">
+          <g transform="rotate(-90 50 50)">
+            <circle cx="50" cy="50" r="${r}" fill="none" stroke="${qTrack(rv)}" stroke-width="9"/>
+            <circle cx="50" cy="50" r="${r}" fill="none" stroke="${qColor(rv)}" stroke-width="9" stroke-dasharray="${circ.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" stroke-linecap="round"/>
+          </g>
+          <text x="50" y="50" text-anchor="middle" dominant-baseline="central" fill="${qColor(rv)}" font-size="12" font-family="Helvetica,Arial,sans-serif" font-weight="600">${rv.toFixed(1)}%</text>
+        </svg>
       </div>
+      <div style="font-family:Helvetica,Arial,sans-serif;font-size:9px;font-weight:700;letter-spacing:1.5px;color:#6b6357;margin-bottom:4px;">SUCCESS RATE</div>
+      ${hasPct(row.successRate)
+        ? `<div style="display:flex;align-items:center;gap:8px;">
+             <div style="flex:1;height:7px;border-radius:4px;overflow:hidden;background:${qTrack(sv)};"><div style="width:${sv}%;height:100%;background:${qColor(sv)};border-radius:4px;"></div></div>
+             <span style="font-family:Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;color:${qColor(sv)};min-width:36px;text-align:right;">${row.successRate}</span>
+           </div>`
+        : `<div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;color:#c9b89a;">-</div>`}
     </div>`;
   }).join("");
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Coverage Dashboard — ${playerName}</title></head>
 <body style="margin:0;background:#faf6ec;font-family:Helvetica,Arial,sans-serif;">
 <div style="background:#faf6ec;max-width:960px;margin:0 auto;padding:40px 48px 32px;box-sizing:border-box;">
-  <div style="border:1.5px solid rgba(61,88,81,0.24);border-radius:6px;overflow:hidden;margin-bottom:32px;">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:28px;margin-bottom:40px;">
+    <div style="text-align:center;line-height:0.9;">
+      <div style="font-size:60px;font-weight:500;color:#3d584e;letter-spacing:-2px;font-family:'Montserrat',Helvetica,Arial,sans-serif;">SUCCESS RATE</div>
+      <div style="font-size:60px;font-weight:900;color:#3d584e;letter-spacing:-2px;font-family:'Montserrat',Helvetica,Arial,sans-serif;">VS. COVERAGE</div>
+    </div>
+    <div style="height:2px;width:52px;background:#b9aed3;border-radius:2px;"></div>
+  </div>
+  <div style="border:1.5px solid rgba(61,88,81,0.24);border-radius:6px;overflow:hidden;margin-bottom:40px;">
     <div style="display:flex;align-items:center;background:#3d5851;padding:0 22px;min-height:45px;">
-      <div style="flex:0 0 120px;font-family:Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">COVERAGE</div>
-      <div style="flex:1;padding-right:14px;font-family:Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">SUCCESS RATE</div>
-      <div style="flex:0 0 100px;padding:0 14px;font-family:Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;text-align:center;">PCTILE</div>
-      <div style="flex:1;padding-left:14px;font-family:Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">% OF ROUTES</div>
+      <div style="flex:0 0 120px;font-family:Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">COVERAGE</div>
+      <div style="flex:2.1;font-family:Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">% OF ROUTES</div>
+      <div style="flex:2.1;font-family:Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;">SUCCESS RATE</div>
+      <div style="flex:0 0 80px;font-family:Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.8px;color:#faf6ec;text-align:right;">PCTILE</div>
     </div>
     <div style="background:#fff;">${tableRows}</div>
   </div>
